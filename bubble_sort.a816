@@ -1,0 +1,115 @@
+
+.include "SWEET32.inc"
+
+.autoimport
+.export init, sw32_print_char
+
+
+.macro	accu8
+	SEP #%00100000
+	.A8
+.endmacro
+
+.macro	accu16
+	REP #%00100000
+	.A16
+.endmacro
+
+
+sw32_print_char:
+	.A8
+	.I16
+	; Custom Printing code here
+RTL
+
+
+
+init:
+	.A8
+	.I16
+	LDA #$0A
+	JSL sw32_print_char			; Newline
+	
+	JSL print_array				; Print the unsorted Array
+	
+	LDA #$80					; Enable 24-bit Addressing
+	JSL sw32_init
+	LDX # .LOWORD(sw32_sort)	; Low Word of the Program Address
+	LDY # .HIWORD(sw32_sort)	; High Word of the Program Address
+	JSL sw32_execute			; Run the Program
+	
+	JSL print_array				; Print the Sorted Array
+	
+RTL
+
+print_array:
+	LDA #$0A
+	JSL sw32_print_char			; Newline
+	LDX # (element_count * 4)
+	@loop:
+		DEX
+		DEX
+		DEX
+		DEX
+		accu16
+		PHX
+		LDA f:array_ptr+2,X
+		PHA
+		LDA f:array_ptr,X
+		PHA
+		accu8
+		JSL sw32_print_h32
+		LDA #$0A
+		JSL sw32_print_char		; Newline
+		PLX
+		PLX
+		PLX
+	BNE @loop
+	LDA #$0A
+	JSL sw32_print_char			; Newline
+RTL
+
+
+
+
+
+.data
+element_count = 10
+array_ptr:
+	.word 9, 0
+	.word 3, 0
+	.word 1, 0
+	.word 8, 0
+	.word 6, 0
+	.word 4, 0
+	.word 0, 0
+	.word 3, 0
+	.word 7, 0
+	.word 8, 0
+
+.data
+sw32_sort:
+	LLI R15, array_ptr				; Get the Address of the Array to be sorted
+	LWI R14, element_count-1		; Get the amount of elements in the Array (minus 1)
+	
+	@outer_loop:
+		CLR SR, F7					; Clear the "swapped" Flag
+		
+		ADR R13, R15, R0			; Save a Copy of the Array Address into R13
+		ADR R12, R14, R0			; Save a Copy of the Element count into R12
+		@inner_loop:
+			LL R1, R13				; Load a Value from the Array
+			ADI R13, 4				; Increment the Pointer to the next element
+			LL R2, R13				; And Get a second Value from the Array+1
+			SBR R0, R2, R1			; Compare them (R1 - R2)
+			BNC @no_swap		; If R1 > R2, swap them
+				SL R13, R1			; Store R1 to Array+1
+				ADI R13, -4
+				SL R13, R2			; Store R2 to Array
+				ADI R13, 4			; Move the Array Pointer back to where it was before
+				SET SR, F7			; And Set the "swapped" Flag
+			@no_swap:
+			ADI R12, -1				; Decrement the Element counter
+		BNZ @inner_loop
+	BF7 @outer_loop
+EXIT

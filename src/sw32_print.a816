@@ -1,0 +1,174 @@
+.importzp sw32_regs, sw32_PC, sw32_SR
+.import sw32_print_char
+.export sw32_print, sw32_print_h32, sw32_print_h8
+
+.feature string_escapes
+
+; Macros to deal with Register Widths
+.macro	sw32_accu8
+	SEP #%00100000
+	.A8
+.endmacro
+
+.macro	sw32_accu16
+	REP #%00100000
+	.A16
+.endmacro
+
+.macro	sw32_index8
+	SEP #%00010000
+	.I8
+.endmacro
+
+.macro	sw32_index16
+	REP #%00010000
+	.I16
+.endmacro
+
+.data
+sw32_bitt:
+	.byte %00000001
+	.byte %00000010
+	.byte %00000100
+	.byte %00001000
+	.byte %00010000
+	.byte %00100000
+	.byte %01000000
+	.byte %10000000
+
+sw32_hext:
+	.byte "0123456789ABCDEF"
+
+sw32_print_str:
+	.byte "R1:  $#\nR2:  $#\nR3:  $#\nR4:  $#\nR5:  $#\nR6:  $#\nR7:  $#\nR8:  $#\nR9:  $#\nR10: $#\nR11: $#\nR12: $#  PC: $*\nR13: $#\nR14: $#      7654NCZ\nR15: $#  SR: @"
+	.byte $00
+
+.code
+
+; Print the contents of all Registers
+; # -> Register
+; * -> Program Counter
+; @ -> Status Register
+sw32_print:
+	.A8
+	.I16
+	PHA
+	PHX
+	PHY
+	
+	LDX #0								; Character Counter
+	LDY #4								; Register Counter
+	@print_loop:
+		LDA f:sw32_print_str,X			; Get a Character from the String
+		BEQ @print_loop_exit			; If it's 0, the end has been reached, so exit
+		
+		CMP #'#'						; If the # Character was read, print out a Register
+		BNE @sk_reg
+			sw32_accu16
+			TXA
+			LDX z:sw32_regs+2,Y
+			PHX
+			LDX z:sw32_regs,Y
+			PHX							; Push the 32-bit Register to the Stack
+			INY
+			INY
+			INY
+			INY							; Move the Register Counter to the next Register
+			TAX
+			sw32_accu8
+			JSL sw32_print_h32			; Then Print the Register
+			PLA
+			PLA
+			PLA
+			PLA
+			INX
+		BRA @print_loop
+		@sk_reg:
+		
+		CMP #'*'						; If the * Character was read, print out the Program Counter
+		BNE @sk_pc
+			PHX
+			LDX z:sw32_PC+2				; Get the High Word of the PC
+			PHX							; Push it to the Stack
+			LDX z:sw32_PC				; Get the Low Word of the PC
+			PHX							; Push it to the Stack
+			JSL sw32_print_h32			; And Print it
+			PLX
+			PLX
+			PLX
+			INX
+		BRA @print_loop
+		@sk_pc:
+		
+		CMP #'@'						; If the @ Character was read, print out the Status Register
+		BNE @sk_sr
+			PHX
+			LDX #7						; Start at bit 7
+			@bit_loop:
+				CLC						; Clear the Carry
+				LDA f:sw32_bitt,X		; Get a Mask from the Bit Table
+				AND z:sw32_SR			; Use it to check a bit in the SR
+				BEQ @bit_zero			; If it's 0, keep Carry 0 as well
+				SEC						; If it's 1, set the Carry
+				@bit_zero:
+				LDA #'0'				; Load an ASCII 0 into A
+				ADC #0					; Add 1 if the Carry is set
+				JSL sw32_print_char		; And then Print it
+				DEX						; Go to the next bit
+			BNE @bit_loop
+			PLX
+			INX
+		BRA @print_loop
+		@sk_sr:
+		JSL sw32_print_char
+		INX
+	BNE @print_loop
+	@print_loop_exit:
+	
+	PLY
+	PLX
+	PLA
+RTL
+
+
+; Takes a 32-bit word from the Stack (starting at SP+6) and prints it out as Hexadecimal
+sw32_print_h32:
+	.A8
+	.I16
+	PHX
+	LDA 9,S
+	JSL sw32_print_h8
+	LDA 8,S
+	JSL sw32_print_h8
+	LDA 7,S
+	JSL sw32_print_h8
+	LDA 6,S
+	JSL sw32_print_h8
+	PLX
+RTL
+
+
+sw32_print_h8:
+	.A8
+	.I16
+	sw32_index8
+	PHA						; Push a Copy of A
+	LSR
+	LSR
+	LSR
+	LSR						; Push the High Nibble into the Low Nibble
+	AND #$0F				; Mask out the High Nibble just in case
+	TAX						; Throw it into X
+	LDA f:sw32_hext,X		; Get the Character from the HEX Table
+	JSL sw32_print_char		; And Print it to Serial
+	PLA						; Get the Copy of A
+	AND #$0F				; Remove the High Nibble
+	TAX						; Throw it into X
+	LDA f:sw32_hext,X		; Get the Character from the HEX Table
+	JSL sw32_print_char		; And Print it to Serial
+	sw32_index16
+RTL
+
+
+
+

@@ -1,0 +1,36 @@
+.importzp sw32_ctrl, sw32_regs, sw32_SR
+.export sw32_init
+
+; Macros to deal with Register Widths
+.macro	sw32_accu8
+	SEP #%00100000
+	.A8
+.endmacro
+
+.macro	sw32_accu16
+	REP #%00100000
+	.A16
+.endmacro
+
+
+
+; Initializes the SWEET32 VM
+; Input: A - Control Byte
+sw32_init:
+	.A8
+	.I16
+	STA z:sw32_ctrl			; Set the Control Register
+	PHX
+	sw32_accu16
+	LDX #70
+	@loop:
+		STZ z:sw32_regs,X		; Clear PC, and R0-R15
+		DEX
+		DEX
+	BNE @loop
+	sw32_accu8
+	PLX
+	LDA #1
+	STA z:sw32_SR			; Set the SR to the default value
+RTL
+

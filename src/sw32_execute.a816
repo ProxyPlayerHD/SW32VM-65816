@@ -1,0 +1,1013 @@
+.export sw32_execute
+.exportzp sw32_ctrl, sw32_regs, sw32_PC, sw32_SR
+
+;__sw32_debugging = 1
+
+.zeropage
+sw32_regs:
+sw32_R0:	.res 4	; 0 ----- Constant 0
+sw32_R1:	.res 4	; 4  \
+sw32_R2:	.res 4	; 8  |
+sw32_R3:	.res 4	; 12 |
+sw32_R4:	.res 4	; 16 |
+sw32_R5:	.res 4	; 20 |
+sw32_R6:	.res 4	; 24 |
+sw32_R7:	.res 4	; 28 |
+sw32_R8:	.res 4	; 32 |--- General Purpose Registers
+sw32_R9:	.res 4	; 36 |
+sw32_R10:	.res 4	; 40 |
+sw32_R11:	.res 4	; 44 |
+sw32_R12:	.res 4	; 48 |
+sw32_R13:	.res 4	; 52 |
+sw32_R14:	.res 4	; 56 |
+sw32_R15:	.res 4	; 60 /
+sw32_tmp:	.res 4	; 64
+sw32_PC:	.res 4	; ------- Program Counter
+sw32_SR:	.res 1	; ------- Status Register
+sw32_ctrl:	.res 1	; ------- sw32 Control Register
+; Control Register bits:
+; 0 - 
+; 1 - 
+; 2 - 
+; 3 - 
+; 4 - 
+; 5 - 
+; 6 - 
+; 7 - Address Mode (0 = 16-bit, 1 = 24-bit)
+
+sw32_Z_flag		= %00000010
+sw32_C_flag		= %00000100
+sw32_N_flag		= %00001000
+sw32_F4_flag	= %00010000
+sw32_F5_flag	= %00100000
+sw32_F6_flag	= %01000000
+sw32_F7_flag	= %10000000
+
+.data
+sw32_bitt:
+	.byte %00000001
+	.byte %00000010
+	.byte %00000100
+	.byte %00001000
+	.byte %00010000
+	.byte %00100000
+	.byte %01000000
+	.byte %10000000
+
+.code
+
+; Macro for printing debugging info
+.ifdef __sw32_debugging
+	.import sw32_print_char
+	.macro sw32_debug char
+		PHP
+		PHA
+		PHX
+		PHY
+		LDA #char
+		JSL sw32_print_char
+		PLY
+		PLX
+		PLA
+		PLP
+	.endmacro
+.else
+	.macro sw32_debug char
+	.endmacro
+.endif
+
+
+; Copies the Z Flag into the VM's Zero Flag
+.macro COPY_Z
+	BNE :+
+	LDA #sw32_Z_flag
+	TSB z:sw32_SR
+	BRA :++
+:	LDA #sw32_Z_flag
+	TRB z:sw32_SR
+:	
+.endmacro
+
+; Copies the C Flag into the VM's Carry Flag
+.macro COPY_C
+	BCC :+
+	LDA #sw32_C_flag
+	TSB z:sw32_SR
+	BRA :++
+:	LDA #sw32_C_flag
+	TRB z:sw32_SR
+:	
+.endmacro
+
+; Copies the Inverse of the C Flag into the VM's Carry Flag
+.macro COPY_NC
+	BCS :+
+	LDA #sw32_C_flag
+	TSB z:sw32_SR
+	BRA :++
+:	LDA #sw32_C_flag
+	TRB z:sw32_SR
+:	
+.endmacro
+
+; Copies the N Flag into the VM's Negative Flag
+.macro COPY_N
+	BPL :+
+	LDA #sw32_N_flag
+	TSB z:sw32_SR
+	BRA :++
+:	LDA #sw32_N_flag
+	TRB z:sw32_SR
+:	
+.endmacro
+
+; Copies the VM's Carry Flag into the CPU's C Flag
+.macro GET_C
+	LDA z:sw32_SR
+	LSR A
+	LSR A
+	LSR A
+.endmacro
+
+
+; Macros to deal with Register Widths
+.macro	sw32_accu8
+	SEP #%00100000
+	.A8
+.endmacro
+
+.macro	sw32_accu16
+	REP #%00100000
+	.A16
+.endmacro
+
+.macro	sw32_index8
+	SEP #%00010000
+	.I8
+.endmacro
+
+.macro	sw32_index16
+	REP #%00010000
+	.I16
+.endmacro
+
+
+
+
+; Start Executing SWEET32 code
+; Input: X - Low Word of the Starting Address
+;        Y - High Word of the Starting Address
+sw32_execute:
+	.A8
+	.I16
+	STY z:sw32_PC+2
+	STX z:sw32_PC
+	PHB					; Save a Copy of the Data Bank
+	TYA					; Get the Low Byte of the High Word of the PC
+	PHA
+	PLB					; Then Set the Data Bank to it
+	sw32_accu16
+	@sw32_next:
+	LDA a:$0000,X		; Fetch an Instruction
+	PHA					; Save a Copy of the Instruction
+	sw32_debug '-'
+	sw32_debug '-'
+	INX
+	BNE :+
+	INC z:sw32_PC+2
+:	INX
+	BNE :+
+	INC z:sw32_PC+2
+:	STX z:sw32_PC		; Increment the PC and save it
+	AND #$000F			; Mask the Lowest Nibble of the Instruction
+	
+	.A16
+	BNE @L0001			; 0000 - Branches
+	sw32_accu8
+	sw32_debug '0'
+	LDA 1,S					; Get the Low Byte of the Instruction
+	LSR A
+	LSR A
+	LSR A
+	LSR A					; Move the High Nibble into the Low Nibble
+	LSR A					; And Shift one more to get the set/clear select bit into the Carry
+	AND #$07				; And Mask the rest
+	TAX						; Throw it into X
+	LDA f:sw32_bitt,X		; Read the corresponding Byte from the Bit Table
+	AND z:sw32_SR			; And use it as a Mask applied to the SR
+	BCC @sw32_brN
+	BNE @sw32_brCalc
+	@sw_exit:
+BRL @sw32_end8				; If the checked bit is 0, no Branch happens
+
+@sw32_brN:
+	BNE @sw_exit			; If the checked bit is 1, no Branch happens
+	@sw32_brCalc:
+	LDA 2,S					; if the checked bit is correct, get the High Byte of the Instruction
+	sw32_accu16
+	STZ z:sw32_tmp			; Pre-clear the tmp word
+	BPL @f					; Check if the Relative Address is negative
+	ORA #$FF00				; If yes, extend it to 32-bits with 1's
+	LDX #$FFFF
+	STX z:sw32_tmp
+@f:	ASL A
+	ROL z:sw32_tmp			; And then multiply it by 2 because it counts in 16-bit words
+	CLC
+	ADC z:sw32_PC
+	STA z:sw32_PC
+	LDA z:sw32_tmp
+	ADC z:sw32_PC+2			; And finally add the Offset (*2) to the PC
+	STA z:sw32_PC+2
+BRL @sw32_end16
+
+@L0001:
+	.A16
+	DEC A
+	BNE @L0010			; 0001 - Jump and Link
+	sw32_accu8
+	sw32_debug '1'
+	LDY z:sw32_PC+2
+	PHX
+	PHY						; Save a copy of the PC to the Stack
+	LDA 5,S					; Get the Low Byte of the Instruction
+	AND #$F0				; Check the Source Register
+	BEQ @src0				; If it's R0, don't modify the PC
+	JSR sw32_getreg_hn		; Get the Source Register
+	STX z:sw32_PC
+	STY z:sw32_PC+2			; And put it into the PC
+	@src0:
+	LDA 6,S					; Get the High Byte of the Instruction
+	PLY
+	PLX						; Get the PC back from the Stack
+	JSR sw32_setreg_ln		; And write X/Y into the Destination Register
+BRL @sw32_end8
+
+@L0010:
+	.A16
+	DEC A
+	BNE @L0011			; 0010 - Add
+	sw32_accu8
+	sw32_debug '2'
+	
+	JSR get_ra_rb			; Get both Source Registers (Ra into X/Y, Rb into sw32_tmp)
+	CLC
+	sw32_accu16
+	TXA						; Put the Low Word into A
+	ADC z:sw32_tmp			; Add the B Source to it
+	STA z:sw32_tmp
+	TAX
+	TYA						; Put the High Word into A
+	ADC z:sw32_tmp+2		; Add the B Source to it
+	STA z:sw32_tmp+2
+	TAY
+	sw32_accu8
+	PHP
+	PHP						; Save 2 Copies of the flags for later
+	LDA 4,S					; Get the High Byte of the Instruction
+	JSR sw32_setreg_ln		; And store the result into the selected Register
+	PLP						; Get the Flags of the High Word
+	COPY_N					; Set the VM's Negative Flag according to the CPU's N Flag
+	PLP						; Get the Flags again
+	COPY_C					; And then set the VM's Carry Flag according to the CPU's Carry
+	LDX z:sw32_tmp+2		; Get the High Word of the result
+	BNE @nZADD				; Check if it's 0
+	LDX z:sw32_tmp			; If it is, also check the Low Word
+	@nZADD:
+	COPY_Z					; If both are 0, set the VM's Zero Flag, otherwise clear it
+	
+BRL @sw32_end8
+
+@L0011:
+	.A16
+	DEC A
+	BNE @L0100			; 0011 - Subtract
+	sw32_accu8
+	sw32_debug '3'
+	
+	JSR get_ra_rb			; Get both Source Registers (Ra into X/Y, Rb into sw32_tmp)
+	sw32_accu16
+	TXA						; Put the Low Word into A
+	SEC
+	SBC z:sw32_tmp			; Subtract the B Source from it
+	STA z:sw32_tmp
+	TAX
+	TYA						; Put the High Word into A
+	SBC z:sw32_tmp+2		; Subtract the B Source from it
+	STA z:sw32_tmp+2
+	TAY
+	sw32_accu8
+	PHP
+	PHP						; Save 2 Copies of the flags for later
+	LDA 4,S					; Get the High Byte of the Instruction
+	JSR sw32_setreg_ln		; And store the result into the selected Register
+	PLP						; Get the Flags of the High Word
+	COPY_N					; Set the VM's Negative Flag according to the CPU's N Flag
+	PLP						; Get the Flags again
+	COPY_NC					; And then set the VM's Carry Flag according to the Inverted CPU Carry
+	LDX z:sw32_tmp+2		; Get the High Word of the result
+	BNE @nZSUB				; Check if it's 0
+	LDX z:sw32_tmp			; If it is, also check the Low Word
+	@nZSUB:
+	COPY_Z					; If both are 0, set the VM's Zero Flag, otherwise clear it
+	
+BRL @sw32_end8
+
+@L0100:
+	.A16
+	DEC A
+	BNE @L0101			; 0100 - Logic AND
+	sw32_accu8
+	sw32_debug '4'
+	
+	JSR get_ra_rb			; Get both Source Registers (Ra into X/Y, Rb into sw32_tmp)
+	sw32_accu16
+	TXA						; Put the Low Word into A
+	AND z:sw32_tmp			; AND it with the B Source
+	STA z:sw32_tmp
+	TAX
+	TYA						; Put the High Word into A
+	AND z:sw32_tmp+2		; AND it with the B Source
+	STA z:sw32_tmp+2
+	TAY
+	sw32_accu8
+	PHP						; Save a Copy of the flags for later
+	LDA 3,S					; Get the High Byte of the Instruction
+	JSR sw32_setreg_ln		; And store the result into the selected Register
+	PLP						; Get the Flags of the High Word
+	COPY_N					; Set the VM's Negative Flag according to the CPU's N Flag
+	LDX z:sw32_tmp+2		; Get the High Word of the result
+	BNE @nZAND				; Check if it's 0
+	LDX z:sw32_tmp			; If it is, also check the Low Word
+	@nZAND:
+	COPY_Z					; If both are 0, set the VM's Zero Flag, otherwise clear it
+	
+BRL @sw32_end8
+
+@L0101:
+	.A16
+	DEC A
+	BNE @L0110			; 0101 - Logic OR
+	sw32_accu8
+	sw32_debug '5'
+	
+	JSR get_ra_rb			; Get both Source Registers (Ra into X/Y, Rb into sw32_tmp)
+	sw32_accu16
+	TXA						; Put the Low Word into A
+	ORA z:sw32_tmp			; OR it with the B Source
+	STA z:sw32_tmp
+	TAX
+	TYA						; Put the High Word into A
+	ORA z:sw32_tmp			; OR it with the B Source
+	STA z:sw32_tmp
+	TAY
+	sw32_accu8
+	PHP						; Save a Copy of the flags for later
+	LDA 3,S					; Get the High Byte of the Instruction
+	JSR sw32_setreg_ln		; And store the result into the selected Register
+	PLP						; Get the Flags of the High Word
+	COPY_N					; Set the VM's Negative Flag according to the CPU's N Flag
+	LDX z:sw32_tmp+2		; Get the High Word of the result
+	BNE @nZOR				; Check if it's 0
+	LDX z:sw32_tmp			; If it is, also check the Low Word
+	@nZOR:
+	COPY_Z					; If both are 0, set the VM's Zero Flag, otherwise clear it
+	
+BRL @sw32_end8
+
+@L0110:
+	.A16
+	DEC A
+	BNE @L0111			; 0110 - Logic XOR
+	sw32_accu8
+	sw32_debug '6'
+	
+	JSR get_ra_rb			; Get both Source Registers (Ra into X/Y, Rb into sw32_tmp)
+	sw32_accu16
+	TXA						; Put the Low Word into A
+	EOR z:sw32_tmp			; XOR it with the B Source
+	STA z:sw32_tmp
+	TAX
+	TYA						; Put the High Word into A
+	EOR z:sw32_tmp			; XOR it with the B Source
+	STA z:sw32_tmp
+	TAY
+	sw32_accu8
+	PHP						; Save a Copy of the flags for later
+	LDA 3,S					; Get the High Byte of the Instruction
+	JSR sw32_setreg_ln		; And store the result into the selected Register
+	PLP						; Get the Flags of the High Word
+	COPY_N					; Set the VM's Negative Flag according to the CPU's N Flag
+	LDX z:sw32_tmp+2		; Get the High Word of the result
+	BNE @nZXOR				; Check if it's 0
+	LDX z:sw32_tmp			; If it is, also check the Low Word
+	@nZXOR:
+	COPY_Z					; If both are 0, set the VM's Zero Flag, otherwise clear it
+	
+BRL @sw32_end8
+
+@L0111:
+	.A16
+	DEC A
+	BNE @L1000			; 0111 - Arithmetic Shift Left
+	sw32_accu8
+	sw32_debug '7'
+	
+	LDA 1,S					; Get the Low Byte of the Instruction
+	JSR sw32_getreg_hn		; Get the contents of the Selected Register
+	CLC
+	sw32_accu16
+	TXA						; Put the Low Word into A
+	ASL A					; Shift it
+	TAX						; And put it back into X
+	TYA						; Put the High Word into A
+	ROL A					; Shift it
+	TAY						; And put it back into Y
+	COPY_C					; Set the Carry Flag to the shifted out bit
+	sw32_accu8
+	PHX
+	PHY
+	PHP
+	LDA 7,S					; Get the High Byte of the Instruction
+	JSR sw32_setreg_ln		; And Write the Data to the selected Register
+	PLP
+	COPY_N					; Set the Negative Flag to what it should be
+	PLY
+	PLX
+	CPX #0
+	BNE @nZASL
+	CPY #0
+	@nZASL:
+	COPY_Z					; Check both Words and set the Zero Flag to what it should be
+	
+BRL @sw32_end8
+
+@L1000:
+	.A16
+	DEC A
+	BNE @L1001			; 1000 - Logic Shift Right
+	sw32_accu8
+	sw32_debug '8'
+	
+	LDA 1,S					; Get the Low Byte of the Instruction
+	JSR sw32_getreg_hn		; Get the contents of the Selected Register
+	CLC
+	sw32_accu16
+	TYA						; Put the High Word into A
+	LSR A					; Shift it
+	TAY						; And put it back into Y
+	TXA						; Put the Low Word into A
+	ROR A					; Shift it
+	TAX						; And put it back into X
+	COPY_C					; Set the Carry Flag to the shifted out bit
+	sw32_accu8
+	PHX
+	PHY
+	LDA 6,S					; Get the High Byte of the Instruction
+	JSR sw32_setreg_ln		; And Write the Data to the selected Register
+	LDA #0
+	COPY_N					; Clear the Negative Flag as it can never be 1
+	PLY
+	PLX
+	CPX #0
+	BNE @nZLSR
+	CPY #0
+	@nZLSR:
+	COPY_Z					; Check both Words and set the Zero Flag to what it should be
+	
+BRL @sw32_end8
+
+@L1001:
+	.A16
+	DEC A
+	BNE @L1010			; 1001 - Rotate Left
+	sw32_accu8
+	sw32_debug '9'
+	
+	LDA 1,S					; Get the Low Byte of the Instruction
+	JSR sw32_getreg_hn		; Get the contents of the Selected Register
+	GET_C					; Put the Carry Flag into the CPU's Carry Flag
+	sw32_accu16
+	TXA						; Put the Low Word into A
+	ROL A					; Shift it
+	TAX						; And put it back into X
+	TYA						; Put the High Word into A
+	ROL A					; Shift it
+	TAY						; And put it back into Y
+	sw32_accu8
+	PHX
+	PHY
+	PHP
+	PHP
+	LDA 8,S					; Get the High Byte of the Instruction
+	JSR sw32_setreg_ln		; And Write the Data to the selected Register
+	PLP						; Get the Flags from the High Word
+	COPY_C					; Set the Carry Flag to the shifted out bit
+	PLP
+	COPY_N					; Set the Negative Flag to what it should be
+	PLY
+	PLX
+	CPX #0
+	BNE @nZROL
+	CPY #0
+	@nZROL:
+	COPY_Z					; Check both Words and set the Zero Flag to what it should be
+	
+BRL @sw32_end8
+
+@L1010:
+	.A16
+	DEC A
+	BNE @L1011			; 1010 - Rotate Right
+	sw32_accu8
+	sw32_debug 'A'
+	
+	LDA 1,S					; Get the Low Byte of the Instruction
+	JSR sw32_getreg_hn		; Get the contents of the Selected Register
+	GET_C					; Put the Carry Flag into the CPU's Carry Flag
+	PHP
+	PLA
+	ROR A
+	ROR A					; And Rotate it twice to put the C Flag into the N Flag
+	COPY_N					; Set the Negative Flag the previous Carry Flag
+	sw32_accu16
+	TYA						; Put the High Word into A
+	ROR A					; Shift it
+	TAY						; And put it back into Y
+	TXA						; Put the Low Word into A
+	ROR A					; Shift it
+	TAX						; And put it back into X
+	COPY_C					; Set the Carry Flag to the shifted out bit
+	sw32_accu8
+	PHX
+	PHY
+	LDA 6,S					; Get the High Byte of the Instruction
+	JSR sw32_setreg_ln		; And Write the Data to the selected Register
+	PLY
+	PLX
+	CPX #0
+	BNE @nZROR
+	CPY #0
+	@nZROR:
+	COPY_Z					; Check both Words and set the Zero Flag to what it should be
+	
+BRL @sw32_end8
+
+@L1011:
+	.A16
+	DEC A
+	BNE @L1100			; 1011 - Add Immediate
+	sw32_accu8
+	sw32_debug 'B'
+	
+	LDA 2,S					; Get the High Byte of the Instruction
+	JSR sw32_sign8
+	STX z:sw32_tmp
+	STY z:sw32_tmp+2		; Sign Extend and store it
+	LDA 1,S					; Get the Low Byte of the Instruction
+	JSR sw32_getreg_hn		; Get the Source Register's contents
+	CLC
+	sw32_accu16
+	TXA						; Put the Low Word into A
+	ADC z:sw32_tmp			; Add the Low Word of the Immediate value to it
+	TAX
+	TYA						; Put the High Word into A
+	ADC z:sw32_tmp+2		; Add the High Word of the Immediate value to it
+	TAY
+	sw32_accu8
+	PHX
+	PHY
+	PHP
+	LDA 6,S					; Get the Low Byte of the Instruction again
+	JSR sw32_setreg_hn		; And store the result into the selected Register
+	PLP						; Get the Flags of the High Word
+	COPY_N					; Set the VM's Negative Flag according to the CPU's N Flag
+	COPY_C					; And then set the VM's Carry Flag according to the CPU's Carry
+	PLY						; Get the High Word of the result
+	PLX						; Get the Low Word of the result
+	BNE @nZADI				; Check if the Low Word is 0
+	CPY #0					; If it is, also check the High Word
+	@nZADI:
+	COPY_Z					; If both are 0, set the VM's Zero Flag, otherwise clear it
+	
+BRL @sw32_end8
+
+@L1100:
+	.A16
+	DEC A
+	BEQ :+
+	BRL @L1101			; 1100 - Load/Store
+:	sw32_accu8
+	sw32_debug 'C'
+	
+	LDA 1,S					; Get the Low Byte of the Instruction
+	JSR sw32_getreg_hn		; And use it to get the 32-bit Address
+	LDA z:sw32_ctrl			; Get the Control Byte
+	BPL @WORDADDR			; Check bit 7, 0 = 16-bit addresses, 1 = 24-bit Addresses
+	TYA
+	PHA
+	PLB						; in 24-bit Address Mode, Set the Data Bank to the Low Byte of Y
+	@WORDADDR:				; in 16-bit Address Mode, just skip ahead
+	LDA 2,S					; Get the High Byte of the Instruction
+	LSR A
+	LSR A
+	LSR A
+	LSR A					; Put bit 3 into the Carry
+	LDA 2,S					; Get the High Byte of the Instruction again
+	AND #$07				; And mask the bottom 3 bits
+	BCC @LOADLS				; Check bit 3, if it's 0 it's a "Load" instruction, Otherwise it's a "Store" Instruction
+	DEC A
+	BEQ @STORE001
+	DEC A
+	BEQ @STORE010
+	
+	PHX						; Store Byte
+	LDA 4,S					; Get the High Byte of the Instruction
+	JSR sw32_getreg_hn		; And Read the selected Register
+	TXA
+	PLX						; Restore the Address
+	STA a:$0000,X			; And Store the Low Byte of the Register to Memory
+	
+BRL @sw32_end8
+
+@STORE001:					; Store Word
+	PHX						; Save the Address
+	LDA 4,S					; Get the High Byte of the Instruction
+	JSR sw32_getreg_hn		; And Read the selected Register
+	PLY						; Restore the Address
+	sw32_accu16
+	TXA
+	STA a:$0000,Y			; And Store the Low Word of the Register to Memory
+	
+BRL @sw32_end16
+
+@STORE010:					; Store Long
+	PHX						; Save the Address
+	LDA 4,S					; Get the High Byte of the Instruction
+	JSR sw32_getreg_hn		; And Read the selected Register
+	sw32_accu16
+	TXA						; Move the Low Word into A
+	PLX						; Restore the Address
+	STA a:$0000,X			; Store the Low Word of the Register to Memory
+	INX
+	INX
+	TYA						; Move the High Word into A
+	STA a:$0000,X			; Store the High Word of the Register to Memory
+	
+BRL @sw32_end16
+
+;; -------------------------------- ;;
+
+@LOADLS:
+	DEC A
+	BEQ @LOAD001
+	DEC A
+	BEQ @LOAD010
+	DEC A
+	BEQ @LOAD011
+	DEC A
+	BEQ @LOAD100
+	
+	LDA a:$0000,X			; Load Byte (Sign Extended)
+	JSR sw32_sign8
+	LDA 2,S					; Get the High Byte of the Instruction
+	JSR sw32_setreg_hn		; And Write the Byte to the selected Register
+	
+BRL @sw32_end8
+
+@LOAD001:					; Load Byte (Zero Extended)
+	LDA a:$0000,X
+	sw32_accu16
+	AND #$00FF				; Make sure only the Low Byte is valid
+	TAX						; Throw it into X
+	sw32_accu8
+	LDY #0					; And Clear Y
+	LDA 2,S					; Get the High Byte of the Instruction
+	JSR sw32_setreg_hn		; And Write the Byte to the selected Register
+	
+BRL @sw32_end8
+
+@LOAD010:					; Load Word (Sign Extended)
+	TXY
+	LDX a:$0000,Y
+	JSR sw32_sign16
+	LDA 2,S					; Get the High Byte of the Instruction
+	JSR sw32_setreg_hn		; And Write the Byte to the selected Register
+	
+BRL @sw32_end8
+
+@LOAD011:					; Load Word (Zero Extended)
+	TXY
+	LDX a:$0000,Y
+	LDY #0					; Clear Y
+	LDA 2,S					; Get the High Byte of the Instruction
+	JSR sw32_setreg_hn		; And Write the Byte to the selected Register
+	
+BRL @sw32_end8
+
+@LOAD100:					; Load Long
+	LDY a:$0000,X			; Load the Low Word
+	PHY						; Save it for now
+	INX
+	INX
+	LDY a:$0000,X			; Load the High Word
+	PLX						; Restore the Low Word
+	LDA 2,S					; Get the High Byte of the Instruction
+	JSR sw32_setreg_hn		; And Write the Byte to the selected Register
+	
+BRL @sw32_end8
+
+@L1101:
+	.A16
+	DEC A
+	BNE @L1110			; 1101 - Set bit
+	sw32_accu8
+	sw32_debug 'D'
+	
+	LDA 1,S					; Get the Low Byte of the Instruction
+	AND #$F0
+	BEQ @SRSET				; Branch away if the SR is selected
+	LDA 2,S					; If Not, get the High Byte of the Instruction
+	sw32_accu16
+	AND #$0007				; Make sure only the lower 3 bits are valid
+	TAX
+	sw32_accu8
+	LDA f:sw32_bitt,X		; Get a Bitmask from the Bit Table
+	PHA						; And Save it
+	LDA 2,S					; Get the Low Byte of the Instruction again
+	LSR A
+	LSR A
+	AND #$3C				; Shift the High Nibble half-way into the Low Nibble (Register Select)
+	PHA						; Save it as well
+	LDA 4,S					; Get the High Byte of the Instruction again
+	LSR A
+	LSR A
+	LSR A
+	AND #$03				; Shift the 5-bit Number right and mask the lower 2 bits (Byte Select)
+	CLC
+	ADC 1,S					; Add the Register Select and Byte Select together
+	TAX						; Throw the result into X
+	PLA						; Dummy Pull
+	PLA						; Get the bitmask into A again
+	ORA z:sw32_regs,X		; Set the selected bit in the selected Register
+	STA z:sw32_regs,X		; And Store it back
+	
+BRL @sw32_end8
+
+@SRSET:
+	LDA 2,S					; Get the High Byte of the Instruction
+	ORA z:sw32_SR			; OR the High Byte and SR together
+	STA z:sw32_SR			; And store the result back into the SR
+	
+BRL @sw32_end8
+
+@L1110:
+	.A16
+	DEC A
+	BNE @L1111			; 1110 - Clear bit
+	sw32_accu8
+	sw32_debug 'E'
+	
+	LDA 1,S					; Get the Low Byte of the Instruction
+	AND #$F0
+	BEQ @SRCLR				; Branch away if the SR is selected
+	LDA 2,S					; If Not, get the High Byte of the Instruction
+	sw32_accu16
+	AND #$0007				; Make sure only the lower 3 bits are valid
+	TAX
+	sw32_accu8
+	LDA f:sw32_bitt,X		; Get a Bitmask from the Bit Table
+	EOR #$FF				; Invert it
+	PHA						; And then Save it
+	LDA 2,S					; Get the Low Byte of the Instruction again
+	LSR A
+	LSR A
+	AND #$3C				; Shift the High Nibble half-way into the Low Nibble (Register Select)
+	PHA						; Save it as well
+	LDA 4,S					; Get the High Byte of the Instruction again
+	LSR A
+	LSR A
+	LSR A
+	AND #$03				; Shift the 5-bit Number right and mask the lower 2 bits (Byte Select)
+	CLC
+	ADC 1,S					; Add the Register Select and Byte Select together
+	TAX						; Throw the result into X
+	PLA						; Dummy Pull
+	PLA						; Get the bitmask into A again
+	AND z:sw32_regs,X		; Clear the selected bit in the selected Register
+	STA z:sw32_regs,X		; And Store it back
+	
+BRL @sw32_end8
+
+@SRCLR:
+	LDA 2,S					; Get the High Byte of the Instruction
+	EOR #$FF				; Invert it
+	AND z:sw32_SR			; AND the Inverted High Byte and SR together
+	ORA #1					; But make sure bit 0 always stays 1!
+	STA z:sw32_SR			; And Finally store the result back into the SR
+	
+BRL @sw32_end8
+
+@L1111:
+	.A16
+	DEC A
+	BEQ :+
+	BRL @sw32_error			; 1111 - Misc.
+:	sw32_accu8
+	sw32_debug 'F'
+	
+	LDA 2,S					; Get the High Byte of the Instruction
+	BEQ @LWi				; If it's $00, do "Load Word Immediate"
+	DEC A
+	BEQ @LWUi				; If it's $01, do "Load Word Immediate (Unsigned)"
+	DEC A
+	BEQ @LLi				; If it's $02, do "Load Long Immediate"
+	PLY
+	PLB
+	sw32_debug 'E'
+	sw32_debug $0A
+RTL						; If it's anything else, do "Return to 65816 Mode"
+	
+@LWi:
+	TXY
+	LDX a:$0000,Y			; Get the 16-bit Value
+	INY
+	INY
+	STY z:sw32_PC			; Move the PC to the next Instruction
+	JSR sw32_sign16			; Sign Extend the 16-bit Word to 32-bit
+	LDA 1,S					; Get the Low Byte of the Instruction
+	JSR sw32_setreg_hn		; And Store the 32-bit value in the selected Register
+	
+BRA @sw32_end8
+
+@LWUi:
+	TXY
+	LDX a:$0000,Y			; Get the 16-bit Value
+	INY
+	INY
+	STY z:sw32_PC			; Move the PC to the next Instruction
+	LDY #0					; Set the Upper Word to 0
+	LDA 1,S					; Get the Low Byte of the Instruction
+	JSR sw32_setreg_hn		; And Store the 32-bit value in the selected Register
+	
+BRA @sw32_end8
+
+@LLi:
+	LDY a:$0000,X			; Get the Low Word of the Value
+	PHY						; Save it
+	INX
+	INX						; Move the PC to the other half
+	LDY a:$0000,X			; Get the High Word of the Value
+	INX
+	INX
+	STX z:sw32_PC			; Move the PC to the next Instruction
+	PLX						; Get the Low Word Back
+	LDA 1,S					; Get the Low Byte of the Instruction
+	JSR sw32_setreg_hn		; And Store the 32-bit value in the selected Register
+	
+BRA @sw32_end8
+
+
+@sw32_end16:
+	sw32_accu8
+@sw32_end8:
+	sw32_debug 'N'
+	sw32_debug $0A
+	LDA z:sw32_PC+2
+	PHA
+	PLB						; Restore the Data Bank in case it got muddled
+	PLX						; Remove the copy of the Instruction from the stack
+	sw32_accu16
+	STZ z:sw32_R0
+	STZ z:sw32_R0+2			; Clear R0 in case it got muddled
+	
+	LDX z:sw32_PC			; Get the Low word of the PC back
+BRL @sw32_next				; And Do the next instruction
+
+@sw32_error:
+	sw32_accu16
+	PLA
+	PLB
+	sw32_accu8
+RTL
+
+
+
+
+
+get_ra_rb:
+	.A8
+	.I16
+	LDA 4,S					; Get the High Byte of the Instruction
+	JSR sw32_getreg_hn		; Get the B Source Register
+	STX z:sw32_tmp
+	STY z:sw32_tmp+2		; And save it to the temporary Variable
+	LDA 3,S					; Get the Low Byte of the Instruction
+	JSR sw32_getreg_hn		; Get the A Source Register
+RTS
+
+
+
+
+; Read the contents of a Register
+; Input:  A - lower 4-bits contain the address of the Register
+; Output: X - Low Word of the Register's contents
+;         Y - High Word of the Register's contents
+sw32_getreg_ln:
+	.A8
+	.I16
+	ASL A
+	ASL A
+	sw32_getreg_mn:
+	sw32_accu16
+	AND #$003C
+	sw32_accu8
+	TAX
+	LDY z:sw32_regs,X
+	PHY
+	LDY z:sw32_regs+2,X
+	PLX
+RTS
+
+sw32_getreg_hn:
+	LSR A
+	LSR A
+BRA sw32_getreg_mn
+
+; Write to a Register
+; Input:  A - lower 4-bits contain the address of the Register
+;         X - Low Word of the value to be written
+;         Y - high Word of the value to be written
+sw32_setreg_ln:
+	.A8
+	.I16
+	ASL A
+	ASL A
+	sw32_setreg_mn:
+	sw32_accu16
+	AND #$003C
+	sw32_accu8
+	PHX
+	TAX
+	STY z:sw32_regs+2,X
+	PLY
+	STY z:sw32_regs,X
+RTS
+
+sw32_setreg_hn:
+	LSR A
+	LSR A
+BRA sw32_setreg_mn
+
+
+; Takes an 8-bit value and sign extends it to 32-bits
+; Input:  A - Value to extend
+; Output: X - Low Word of the result
+;         Y - High Word of the result
+sw32_sign8:
+	.A8
+	.I16
+	CMP #$80
+	sw32_accu16
+	BCC @plus	; If it's less than $80, branch away
+	ORA #$FF00	; Otherwise set the upper Byte of A
+	TAX			; Throw it into X
+	LDY #$FFFF	; And set Y to all 1's
+	sw32_accu8
+RTS
+@plus:
+	.A16
+	AND #$00FF	; Clear the upper Byte of A
+	TAX			; Throw that into X
+	LDY #0		; And also clear Y
+	sw32_accu8
+RTS
+
+
+; Takes an 16-bit value and sign extends it to 32-bits
+; Input:  X - Value to extend
+; Output: X - Low Word of the result
+;         Y - High Word of the result
+sw32_sign16:
+	.A8
+	.I16
+	CPX #$8000
+	BCS @minus
+	LDY #0
+RTS
+@minus:
+	LDY #$FFFF
+RTS
+
+
+
+
+
+
+
+
+
+
+
+
+
+
