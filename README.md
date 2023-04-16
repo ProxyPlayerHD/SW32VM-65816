@@ -1,18 +1,18 @@
-# SWEET32-65816
-A SWEET16 inspired 32-bit VM for the 65816
-(SW32 for short)
+# SW32VM-65816
+A SWEET16 inspired 32-bit VM for the 65816<p>
+originally called "SWEET32" but now renamed to "SW32VM" (or SW32 for short)
 
-This CA65 Library implements a 32-bit RISC Processor in software for the 65816, which can then be used to more easily handle 32-bit functions (or if you're just more familiar with RISC-like Instruction sets)
+This ca65 Library implements a 32-bit RISC Processor in software for the 65816, which can then be used to more easily handle 32-bit functions (or if you're just more familiar with RISC-like Instruction sets)
 It has the following features:
 * 15x 32-bit General Purpose Registers R1-R15 (R0 is a constant 0)
 * 32-bit Program Counter (though functionally it's only 24-bits wide)
 * 8-bit Status Register called SR, with 3 ALU FLags (Zero, Carry, Negative), and 4 user programmable Flags F4-F7
 * 24-bit Addressing for both Program flow and Load/Store Instructions
 
-Almost all Instructions are 2 Bytes long, except for the "Load Immediate" Instructions which are either 4 or 6 Bytes in length.
+Almost all Instructions are 2 Bytes long, except for all Memory Load/Stores, which are always 4 bytes long, and Load Immediate Instructions which are either 4 or 6 Bytes in length.
 
 # Using the Libary
-It should be as simple as including the `SWEET32.inc` file in your main source file, which defines all the macros for the VM's Instruction set and include the `SWEET32.lib` file when Linking with ld65 (just make sure it's located after (ie to the right) your source files in the ld65 command)
+It should be as simple as including the `SW32VM.inc` file in your main source file, which defines all the macros for the VM's Instruction set and include the `SW32VM.lib` file when Linking with ld65 (just make sure it's located after (ie to the right) your source files in the ld65 command)
 
 in case you need/want to modify the stock VM, the source files are simple enough to assemble and combine into a `.lib` file like this:
 ```
@@ -20,15 +20,17 @@ CA65 -v --cpu 65816 -o sw32_init.o sw32_init.a816
 CA65 -v --cpu 65816 -o sw32_execute.o sw32_execute.a816
 CA65 -v --cpu 65816 -o sw32_print.o sw32_print.a816
 
-AR65 v v r SWEET32.lib sw32_init.o sw32_execute.o sw32_print.o
+AR65 v v r SW32VM.lib sw32_init.o sw32_execute.o sw32_print.o
 ```
 
 # Instruction Set
-The Format is pretty simple:
-Ra = Source Register A
-Rb = Source Register B
-Re = Destination Register
-Rx = Source and Destination Register
+The Format is pretty simple:<p>
+Ra = Source Register A<p>
+Rb = Source Register B<p>
+Rc = Source Register C<p>
+Re = Destination Register<p>
+Rx = Source and Destination Register<p>
+
 |Name|Mnemonic|Description|
 |---|---|---|
 |Branch on Clear|BNv k|Branches if the specified bit "v" in the SR is 0<p>"k" is an 8-bit signed offset multiplied by 2, giving it a -128 to +127 Word range|
@@ -44,14 +46,14 @@ Rx = Source and Destination Register
 |Rotate Left|RLL Re, Ra|Re = C <- Ra <- C, updated Flags: Z, C, N|
 |Rotate Right|RRR Re, Ra|Re = C -> Ra -> C, updated Flags: Z, C, N|
 |Add Immediate|ADI Rx, k|Rx = Rx + k (8-bit, sign-extended to 32-bit), updated Flags: Z, C, N|
-|Load Byte (Signed)|LB Re, Ra|Uses the contents of the Source Register as an Address to load a Byte, sign-extend it, and store it into the Destination Register|
-|Load Byte (Unsigned)|LBU Re, Ra|Same as above, except it zero-extends the Byte|
-|Load Word (Signed)|LW Re, Ra|Same as the first, except it loads a 16-bit word and sign-extends it|
-|Load Word (Unsigned)|LWU Re, Ra|Same as the first, except it loads a 16-bit word and zero-extends it|
-|Load Long|LL Re, Ra|Same as the first, except it loads a full 32-bit word, so no "extending" is required|
-|Store Byte|SB Ra, Rb|Uses the contents of the Source Register A as an Address, and stores the Low Byte of the Source Register B to that Address|
-|Store Word|SW Ra, Rb|Same as above, except it stores the Low Word of the Source Register B|
-|Store Long|SL Ra, Rb|Same as the first, except it stores the whole Source Register B|
+|Load Byte (Signed)|LB Re, (Ra, Rc, k)|Adds the contents of Source Register A, C, and a constant k together. and uses the result as an Address to load a Byte from Memory, sign-extend it, and store it into the Destination Register|
+|Load Byte (Unsigned)|LBU Re, (Ra, Rc, k)|Same as above, except it zero-extends the Byte|
+|Load Word (Signed)|LW Re, (Ra, Rc, k)|Same as the first, except it loads a 16-bit word and sign-extends it|
+|Load Word (Unsigned)|LWU Re, (Ra, Rc, k)|Same as the first, except it loads a 16-bit word and zero-extends it|
+|Load Long|LL Re, (Ra, Rc, k)|Same as the first, except it loads a full 32-bit word, so no "extending" is done|
+|Store Byte|SB (Ra, Rc, k), Rb|Adds the contents of Source Register A, C, and a constant k together. and uses the result as an Address to store the Low Byte of the Source Register B to Memory|
+|Store Word|SW (Ra, Rc, k), Rb|Same as above, except it stores the Low Word of the Source Register B|
+|Store Long|SL (Ra, Rc, k), Rb|Same as the first, except it stores the whole Source Register B|
 |Set Bit|SET Rx, k|Sets the "k"th bit in the specified Register, if the Register is R0 "k" is instead used as an 8-bit wide mask to select which bits in the SR should be set|
 |Clear Bit|CLR Rx, k|Clears the "k"th bit in the specified Register, if the Register is R0 "k" is instead used as an 8-bit wide mask to select which bits in the SR should be cleared|
 |Load Word Immediate (Signed)|LWI Re, k|Sign-extends the 16-bit constant "k" to 32-bits and loads that value into the Destination Register|
@@ -75,7 +77,7 @@ There are 2 main functions required to make the VM Work, and 3 extra functions f
 Currently the Control byte's only used bit is bit 7, which determins the address width for Load/Store Instructions.
 if bit 7 is cleared Load/Store Instructions are limited to 16-bit addressing, if set they are 24-bit instead.
 
-`sw32_execute` - executes SW32 code, it starts at the address given by the X and Y Registers. X = Low Word, Y = High Word (High Byte is ignored)
+`sw32_execute` - executes SW32VM code, it starts at the address given by the X and Y Registers. X = Low Word, Y = High Word (High Byte is ignored)
 The function only returns when an EXIT instruction is executed.
 
 `sw32_print` - prints out the contents of all Registers in a nice and tidy format:
