@@ -1,5 +1,5 @@
 
-.include "SWEET32.inc"
+.include "SW32VM.inc"
 
 .autoimport
 .export init, sw32_print_char
@@ -89,27 +89,25 @@ array_ptr:
 
 .data
 sw32_sort:
-	LLI R15, array_ptr				; Get the Address of the Array to be sorted
-	LWI R14, element_count-1		; Get the amount of elements in the Array (minus 1)
+	LLI R15, #array_ptr					; Get the Address of the Array to be sorted
+	LWI R14, #element_count-1			; Get the amount of elements in the Array (minus 1)
 	
 	@outer_loop:
-		CLR SR, F7					; Clear the "swapped" Flag
+		CLR SR, F7						; Clear the "swapped" Flag
 		
-		ADR R13, R15, R0			; Save a Copy of the Array Address into R13
-		ADR R12, R14, R0			; Save a Copy of the Element count into R12
+		LWI R14, #element_count-1		; Make a Copy of the element count
+		ORR R13, ZERO, ZERO				; Set the Index to 0
 		@inner_loop:
-			LL R1, R13				; Load a Value from the Array
-			ADI R13, 4				; Increment the Pointer to the next element
-			LL R2, R13				; And Get a second Value from the Array+1
-			SBR R0, R2, R1			; Compare them (R1 - R2)
-			BNC @no_swap		; If R1 > R2, swap them
-				SL R13, R1			; Store R1 to Array+1
-				ADI R13, -4
-				SL R13, R2			; Store R2 to Array
-				ADI R13, 4			; Move the Array Pointer back to where it was before
-				SET SR, F7			; And Set the "swapped" Flag
+			LL R1, (R15, R13, 0)		; Load a Value from the Array
+			LL R2, (R15, R13, 4)		; And Get a second Value from the Array+1
+			SBR R0, R2, R1				; Compare them (R1 - R2)
+			BNC @no_swap			; If R1 > R2, swap them
+				SL (R15, R13, 4), R1	; Store R1 to the Array+1
+				SL (R15, R13, 0), R2	; Store R2 to the Array
+				SET SR, F7				; And Set the "swapped" Flag
 			@no_swap:
-			ADI R12, -1				; Decrement the Element counter
+			ADI R13, #4					; Increment the Index
+			ADI R14, #-1				; Decrement the Element counter
 		BNZ @inner_loop
 	BF7 @outer_loop
 EXIT
