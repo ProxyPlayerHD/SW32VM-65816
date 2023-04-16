@@ -1,5 +1,6 @@
 .export sw32_execute
 .exportzp sw32_ctrl, sw32_regs, sw32_PC, sw32_SR
+.autoimport
 
 ;__sw32_debugging = 1
 
@@ -56,9 +57,77 @@ sw32_bitt:
 
 .code
 
+; Macros to deal with Register Widths
+.macro	sw32_accu8
+	SEP #%00100000
+	.A8
+.endmacro
+
+.macro	sw32_accu16
+	REP #%00100000
+	.A16
+.endmacro
+
+.macro	sw32_index8
+	SEP #%00010000
+	.I8
+.endmacro
+
+.macro	sw32_index16
+	REP #%00010000
+	.I16
+.endmacro
+
+.macro	BEQL	addr
+	BNE :+
+	BRL addr
+	:
+.endmacro
+
+.macro	BNEL	addr
+	BEQ :+
+	BRL addr
+	:
+.endmacro
+
+.macro	BCSL	addr
+	BCC :+
+	BRL addr
+	:
+.endmacro
+
+.macro	BCCL	addr
+	BCS :+
+	BRL addr
+	:
+.endmacro
+
+.macro	BMIL	addr
+	BPL :+
+	BRL addr
+	:
+.endmacro
+
+.macro	BPLL	addr
+	BMI :+
+	BRL addr
+	:
+.endmacro
+
+.macro	BVSL	addr
+	BVC :+
+	BRL addr
+	:
+.endmacro
+
+.macro	BVCL	addr
+	BVS :+
+	BRL addr
+	:
+.endmacro
+
 ; Macro for printing debugging info
 .ifdef __sw32_debugging
-	.import sw32_print_char
 	.macro sw32_debug char
 		PHP
 		PHA
@@ -71,6 +140,23 @@ sw32_bitt:
 		PLA
 		PLP
 	.endmacro
+	
+	sw32_print_h16:
+		.A16
+		.I16
+		PHY
+		PHX
+		PHA
+		sw32_accu8
+		LDA 2,S
+		JSL sw32_print_h8
+		LDA 1,S
+		JSL sw32_print_h8
+		sw32_accu16
+		PLA
+		PLX
+		PLY
+	RTS
 .else
 	.macro sw32_debug char
 	.endmacro
@@ -130,56 +216,92 @@ sw32_bitt:
 .endmacro
 
 
-; Macros to deal with Register Widths
-.macro	sw32_accu8
-	SEP #%00100000
-	.A8
-.endmacro
-
-.macro	sw32_accu16
-	REP #%00100000
+; Loads a Word from Memory into A and Increments the PC
+.macro	sw32_lw_inc reg, param
 	.A16
-.endmacro
-
-.macro	sw32_index8
-	SEP #%00010000
-	.I8
-.endmacro
-
-.macro	sw32_index16
-	REP #%00010000
 	.I16
+	.local @a, @b
+	.if ~(.match(param, X))
+		LDX z:sw32_PC
+		sw32_accu8
+		LDA z:sw32_PC+2
+		PHA
+		PLB
+		sw32_accu16
+	.endif
+	LDA a:$0000,X		; Get a Word
+	PHA					; Save it for now
+	INX
+	BNE @a
+	INC z:sw32_PC+2
+@a:	INX
+	BNE @b
+	INC z:sw32_PC+2		; Increment the 24-bit PC
+@b:	STX z:sw32_PC		; And Save it again
+	sw32_accu8
+	LDA z:sw32_PC+2
+	PHA
+	PLB					; Also Update the Databank
+	; And Get the Word back
+	.if (.match(reg, A))
+		sw32_accu16
+		PLA
+	.elseif (.match(reg, X))
+		PLX
+	.elseif (.match(reg, Y))
+		PLY
+	.endif
 .endmacro
 
 
 
 
-; Start Executing SWEET32 code
+; Start Executing SW32VM code
 ; Input: X - Low Word of the Starting Address
 ;        Y - High Word of the Starting Address
 sw32_execute:
 	.A8
 	.I16
-	STY z:sw32_PC+2
-	STX z:sw32_PC
 	PHB					; Save a Copy of the Data Bank
-	TYA					; Get the Low Byte of the High Word of the PC
+	
+	STX z:sw32_PC
+	STY z:sw32_PC+2		; Set the 32-bit PC
+	TYA
 	PHA
-	PLB					; Then Set the Data Bank to it
+	PLB					; Then Set the Data Bank to the Low Byte of the High Word
 	sw32_accu16
 	@sw32_next:
-	LDA a:$0000,X		; Fetch an Instruction
-	PHA					; Save a Copy of the Instruction
-	sw32_debug '-'
-	sw32_debug '-'
-	INX
-	BNE :+
-	INC z:sw32_PC+2
-:	INX
-	BNE :+
-	INC z:sw32_PC+2
-:	STX z:sw32_PC		; Increment the PC and save it
+	
+	.ifdef __sw32_debugging
+		PHX
+		sw32_accu8
+		LDX z:sw32_PC+2
+		PHX
+		LDX z:sw32_PC
+		PHX
+		sw32_debug '#'
+		JSL sw32_print_h32
+		sw32_debug '-'
+		sw32_debug '-'
+		PLX
+		PLX
+		sw32_accu16
+		PLX
+	.endif
+	
+	sw32_lw_inc A, X	; Fetch an Instruction and update the PC
+	.ifdef __sw32_debugging
+		JSR sw32_print_h16
+	.endif
+	PHA
 	AND #$000F			; Mask the Lowest Nibble of the Instruction
+	
+	.ifdef __sw32_debugging
+		sw32_accu8
+		sw32_debug '-'
+		sw32_debug '-'
+		sw32_accu16
+	.endif
 	
 	.A16
 	BNE @L0001			; 0000 - Branches
@@ -599,8 +721,31 @@ BRL @sw32_end8
 :	sw32_accu8
 	sw32_debug 'C'
 	
-	LDA 1,S					; Get the Low Byte of the Instruction
-	JSR sw32_getreg_hn		; And use it to get the 32-bit Address
+	sw32_lw_inc Y, X		; Get the Offset Word into Y and moves the PC to the Word
+	PHY						; Save it to the Stack
+	
+	LDA 3,S					; Get the Low Byte of the Instruction
+	JSR sw32_getreg_hn		; And use it to get the Base Register
+	STX z:sw32_tmp
+	STY z:sw32_tmp+2		; Store the 32-bit Base Address
+	
+	LDA 2,S					; Gtt the High Byte of the Offset Word
+	JSR sw32_getreg_hn		; And use it to get the Offset Register
+	sw32_accu16
+	TXA
+	CLC
+	ADC z:sw32_tmp
+	STA z:sw32_tmp
+	TYA
+	ADC z:sw32_tmp+2
+	STA z:sw32_tmp+2		; Add the Offset Register to the Base Address
+	
+	PLA						; Grab the Offset Word from the Stack
+	JSR sw32_sign12			; Sign Extend the Immediate value and add it to the Address
+	sw32_accu8
+	LDX z:sw32_tmp
+	LDY z:sw32_tmp+2		; Then finally put the Address into X:Y
+	
 	LDA z:sw32_ctrl			; Get the Control Byte
 	BPL @WORDADDR			; Check bit 7, 0 = 16-bit addresses, 1 = 24-bit Addresses
 	TYA
@@ -821,6 +966,10 @@ BRL @sw32_end8
 	BEQ @LWUi				; If it's $01, do "Load Word Immediate (Unsigned)"
 	DEC A
 	BEQ @LLi				; If it's $02, do "Load Long Immediate"
+	DEC A
+	BNE @EXIT				; If it's not $03, Exit the function
+	BRL @DBG				; Otherwise, do a "Debug Print"
+@EXIT:
 	PLY
 	PLB
 	sw32_debug 'E'
@@ -828,23 +977,15 @@ BRL @sw32_end8
 RTL						; If it's anything else, do "Return to 65816 Mode"
 	
 @LWi:
-	TXY
-	LDX a:$0000,Y			; Get the 16-bit Value
-	INY
-	INY
-	STY z:sw32_PC			; Move the PC to the next Instruction
+	sw32_lw_inc X, X		; Get the Word into X and move the PC to the next Instruction
 	JSR sw32_sign16			; Sign Extend the 16-bit Word to 32-bit
 	LDA 1,S					; Get the Low Byte of the Instruction
 	JSR sw32_setreg_hn		; And Store the 32-bit value in the selected Register
 	
-BRA @sw32_end8
+BRL @sw32_end8
 
 @LWUi:
-	TXY
-	LDX a:$0000,Y			; Get the 16-bit Value
-	INY
-	INY
-	STY z:sw32_PC			; Move the PC to the next Instruction
+	sw32_lw_inc X, X		; Get the Word into X and move the PC to the next Instruction
 	LDY #0					; Set the Upper Word to 0
 	LDA 1,S					; Get the Low Byte of the Instruction
 	JSR sw32_setreg_hn		; And Store the 32-bit value in the selected Register
@@ -852,20 +993,28 @@ BRA @sw32_end8
 BRA @sw32_end8
 
 @LLi:
-	LDY a:$0000,X			; Get the Low Word of the Value
+	sw32_lw_inc Y, X		; Get the Low Word into Y and move the PC to the Word
 	PHY						; Save it
-	INX
-	INX						; Move the PC to the other half
-	LDY a:$0000,X			; Get the High Word of the Value
-	INX
-	INX
-	STX z:sw32_PC			; Move the PC to the next Instruction
+	sw32_lw_inc Y, X		; Get the High Word into Y and move the PC to the next Instruction
 	PLX						; Get the Low Word Back
 	LDA 1,S					; Get the Low Byte of the Instruction
 	JSR sw32_setreg_hn		; And Store the 32-bit value in the selected Register
 	
 BRA @sw32_end8
 
+@DBG:
+	LDA 1,S					; Get the Low Byte of the Instruction
+	JSR sw32_getreg_hn		; And get contents of the selected Register
+	PHY
+	PHX
+	LDA #'$'
+	JSL sw32_print_char
+	JSL sw32_print_h32		; And print them
+	LDA #$0A
+	JSL sw32_print_char
+	PLX
+	PLY
+BRA @sw32_end8
 
 @sw32_end16:
 	sw32_accu8
@@ -983,6 +1132,32 @@ RTS
 RTS
 
 
+; Takes an 12-bit value, sign extends it to 32-bits, and adds it to sw32_tmp
+; Input:  A - Value to extend
+sw32_sign12:
+	.A16
+	.I16
+	AND #$0FFF				; Mask out the Offset Register
+	CMP #$0800				; Check if the value is negative
+	BCS @minus
+	CLC
+	ADC z:sw32_tmp
+	STA z:sw32_tmp
+	LDA z:sw32_tmp+2
+	ADC #0
+	STA z:sw32_tmp+2		; If it's not, add $00000xxx to sw32_tmp
+RTS
+@minus:						; If it's negative
+	ORA #$F000				; Set the High Nibble
+	CLC
+	ADC z:sw32_tmp
+	STA z:sw32_tmp
+	LDA z:sw32_tmp+2
+	ADC #$FFFF
+	STA z:sw32_tmp+2		; then add $FFFFFxxx to sw32_tmp
+RTS
+
+
 ; Takes an 16-bit value and sign extends it to 32-bits
 ; Input:  X - Value to extend
 ; Output: X - Low Word of the result
@@ -997,9 +1172,6 @@ RTS
 @minus:
 	LDY #$FFFF
 RTS
-
-
-
 
 
 

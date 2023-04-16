@@ -14,7 +14,7 @@
 
 
 
-; Initializes the SWEET32 VM
+; Initializes the SW32VM
 ; Input: A - Control Byte
 sw32_init:
 	.A8
